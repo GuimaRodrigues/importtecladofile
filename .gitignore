@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.spec
+.venv/
+.build-venv/
+tests/fixtures/private/*
+!tests/fixtures/private/.gitkeep
+*.tmp
+# Yamaha files may contain licensed samples and can be hundreds of megabytes.
+*.X7A
+*.X7U
+*.X7L
+*.X8A
+*.X8U
+*.X8L
