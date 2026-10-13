@@ -3,7 +3,7 @@
 The project keeps binary format handling, safety decisions, and the interface separate:
 
 ```text
-X0/X7/X8 file
+X0/X7/X8 or NPNO file
     │
     ▼
 parser ──► immutable model ──► graph/resolver ──► export plan
@@ -32,6 +32,11 @@ only a silent Boolean.
 `motif.py` is a separate backend for MOTIF XS. It selects `PFM` in X0A or `VCE` in X0V, recalculates
 the catalogue and offsets, and preserves every potentially dependent opaque pair. This separation
 prevents experimental X0 rules from affecting the X7/X8 resolver and writer.
+
+`npno.py` is the separate Nord CBIN/CNSP parser and PCM decoder. It retains stroke offsets instead
+of decoded audio. `npno_exporter.py` decodes and resamples one stroke at a time, maps attack and
+key-off release strokes to at most eight AWM2 elements, streams `DWIM`, then reopens the generated
+X8L and resolves its dependencies before publishing it.
 
 `exporter.py` builds a plan for each `Exxx`/`Dxxx` pair, recalculates item and catalogue offsets,
 copies samples in 4 MiB chunks, writes in the destination directory, and calls `fsync`. Before

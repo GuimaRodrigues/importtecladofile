@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import struct
+import zlib
 from dataclasses import dataclass
 
 
@@ -249,3 +250,41 @@ def classic_dpfm(*waveform_programs: int) -> bytes:
 
 def _opaque_block(chunk_id: str, body: bytes) -> bytes:
     return chunk_id.encode("ascii") + struct.pack(">II", len(body) + 4, 0) + body
+
+
+def make_npno(*, trim_db: int = 0, gain_tenths_db: int = 0) -> bytes:
+    """Build one valid mono, one-stroke CBIN/CNSP piano fixture."""
+    prefix_size = 0x732
+    record_size = 118
+    block_size = 1022
+    body = bytearray(prefix_size)
+    body[0:4] = b"CNSP"
+    struct.pack_into(">H", body, 4, 0x464)
+    body[0x1C : 0x1C + len(b"Test Piano#Small")] = b"Test Piano#Small"
+    body[0x8C:0x10C] = bytes([60] * 128)
+    struct.pack_into(">b", body, 0x40C, gain_tenths_db)
+    struct.pack_into(">H", body, 0x61C, 0x464)
+    struct.pack_into(">H", body, 0x61E, 1)
+    struct.pack_into(">H", body, 0x620, 1)
+    struct.pack_into(">H", body, 0x622 + 60 * 2, 1)
+
+    directory_end = prefix_size + record_size
+    audio_at = ((directory_end + 192 + block_size - 1) // block_size) * block_size - 192
+    record = bytearray(record_size)
+    struct.pack_into(">I", record, 0, audio_at)
+    record[4] = 0  # attack bank
+    record[5] = 0  # velocity layer
+    struct.pack_into(">I", record, 6, 956)
+    struct.pack_into(">H", record, 10, 1)
+    struct.pack_into(">h", record, 0x34, trim_db)
+    body.extend(record)
+    body.extend(b"\x00" * (audio_at - len(body)))
+    body.extend(struct.pack(">H", 8) + b"\x00" * (block_size - 2))
+
+    header = bytearray(44)
+    header[0:4] = b"CBIN"
+    struct.pack_into("<I", header, 4, 1)
+    header[8:12] = b"npno"
+    struct.pack_into("<I", header, 0x14, 610)
+    struct.pack_into("<I", header, 0x18, zlib.crc32(body) & 0xFFFFFFFF)
+    return bytes(header + body)

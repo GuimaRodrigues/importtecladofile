@@ -23,7 +23,7 @@ Adolfsson and contributors. YSFC Forge itself attributes part of its classic sup
 LGPL-3.0-licensed [`ConvertWithMoss`](https://github.com/git-moss/ConvertWithMoss) project by Jürgen
 Moßgraber and contributors.
 
-No code from those projects was incorporated. `classic_dpfm.py` is a minimal, independent
+No code from those projects was incorporated into `classic_dpfm.py`; it is a minimal, independent
 implementation of interoperability facts, with bounds checking and comparison against the 598 real
 blobs available during development.
 
@@ -35,3 +35,16 @@ selection and preserves opaque internal payloads without attempting to translate
 The structural difference between MONTAGE YSFC 4.0.1/4.0.2 (without an `Entr` sort ID) and
 4.0.3–4.0.5 was likewise validated through independent fixtures and the reference reader. The
 writer preserves the legacy-version header field instead of inventing missing IDs.
+
+## Nord Piano Library support
+
+The CNSP metadata and residual-audio decoder in `npno.py` includes portions adapted from
+[`nord-format`](https://github.com/JohnDMoore/nord-format), copyright 2023-2026 John Moore and
+licensed under the BSD 3-Clause License. Its notice is retained in
+`LICENSES/BSD-3-Clause-nord-format.txt`.
+
+`npno_exporter.py` includes the initialized MODX Performance template from, and structure-writing
+logic compatible with, [`ConvertWithMoss`](https://github.com/git-moss/ConvertWithMoss), copyright
+Jürgen Moßgraber and contributors. That module is distributed under LGPL-3.0-only; the license is
+included as `LICENSES/LGPL-3.0-only.txt`. The remainder of this project remains under its stated MIT
+license.

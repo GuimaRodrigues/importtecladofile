@@ -15,6 +15,7 @@ tests/fixtures/private/*
 !tests/fixtures/private/.gitkeep
 *.tmp
 # Yamaha files may contain licensed samples and can be hundreds of megabytes.
+*.npno
 *.X7A
 *.X7U
 *.X7L

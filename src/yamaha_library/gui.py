@@ -32,12 +32,16 @@ from .dependencies import DependencyResolver, DependencySelection
 from .diagnostics import probe_ysfc_file
 from .errors import YamahaLibraryError
 from .exporter import ExportResult, LibraryExporter
+from .loader import SourceLibrary, load_library
 from .model import FileFamily, ParsedLibrary
 from .motif import MotifSelection, MotifSubsetExporter, MotifSubsetResolver
-from .parser import YamahaLibraryParser
+from .npno import NpnoLibrary
+from .npno_exporter import NpnoResolver, NpnoSelection, prepare_exporter
 
-FILE_FILTER = "Yamaha files (*.X0A *.X0V *.X7A *.X7U *.X7L *.X8A *.X8U *.X8L)"
-Selection = DependencySelection | MotifSelection
+FILE_FILTER = (
+    "Supported instrument files (*.npno *.X0A *.X0V *.X7A *.X7U *.X7L *.X8A *.X8U *.X8L)"
+)
+Selection = DependencySelection | MotifSelection | NpnoSelection
 
 
 def performance_label(
@@ -65,7 +69,7 @@ class ExportWorker(QObject):
 
     def __init__(
         self,
-        library: ParsedLibrary,
+        library: SourceLibrary,
         selection: Selection,
         destination: Path,
         overwrite: bool,
@@ -81,25 +85,35 @@ class ExportWorker(QObject):
     @Slot()
     def run(self) -> None:
         try:
-            if isinstance(self.selection, MotifSelection):
+            if isinstance(self.selection, NpnoSelection):
+                if not isinstance(self.library, NpnoLibrary):
+                    raise TypeError("NPNO selection used with a YSFC library.")
+                result = prepare_exporter(self.library, self.selection).export(
+                    self.selection, self.destination, overwrite=self.overwrite
+                )
+            elif isinstance(self.selection, MotifSelection):
+                if not isinstance(self.library, ParsedLibrary):
+                    raise TypeError("MOTIF selection used with a non-YSFC source.")
                 result = MotifSubsetExporter(self.library).export(
                     self.selection, self.destination, overwrite=self.overwrite
                 )
             else:
+                if not isinstance(self.library, ParsedLibrary):
+                    raise TypeError("YSFC selection used with a non-YSFC source.")
                 result = LibraryExporter(
                     self.library, target_family=self.target_family
                 ).export(
                     self.selection, self.destination, overwrite=self.overwrite
                 )
             self.completed.emit(result)
-        except (YamahaLibraryError, OSError, ValueError) as exc:
+        except (YamahaLibraryError, OSError, TypeError, ValueError) as exc:
             self.failed.emit(str(exc))
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.library: ParsedLibrary | None = None
+        self.library: SourceLibrary | None = None
         self.selection: Selection | None = None
         self.export_thread: QThread | None = None
         self.export_worker: ExportWorker | None = None
@@ -127,7 +141,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(file_row)
 
         self.general_label = QLabel(
-            "Select an X0A/X0V, X7A/X7U/X7L, or X8A/X8U/X8L file."
+            "Select an NPNO, X0A/X0V, X7A/X7U/X7L, or X8A/X8U/X8L file."
         )
         self.general_label.setWordWrap(True)
         layout.addWidget(self.general_label)
@@ -200,7 +214,7 @@ class MainWindow(QMainWindow):
         self.last_open_path = Path(filename).resolve()
         self.last_open_error = None
         try:
-            library = YamahaLibraryParser().parse(filename)
+            library = load_library(filename)
         except YamahaLibraryError as exc:
             self.last_open_error = str(exc)
             self.diagnostic_button.setEnabled(True)
@@ -219,12 +233,18 @@ class MainWindow(QMainWindow):
         self.file_label.setText(str(Path(filename)))
         items = library.selectable_items
         kind = library.selectable_kind
-        kind_plural = "Voices" if kind == "Voice" else "Performances"
-        self.general_label.setText(
-            f"{library.family.value} / YSFC {library.header.version} • "
-            f"{library.source_size:,} bytes • {len(items)} {kind_plural} • "
-            f"chunks: {', '.join(library.chunk_ids)}"
-        )
+        kind_plural = "Voices" if kind == "Voice" else "Instruments" if kind == "Instrument" else "Performances"
+        if isinstance(library, NpnoLibrary):
+            self.general_label.setText(
+                f"Nord NPNO / {library.header.version} - {library.source_size:,} bytes - "
+                f"{len(library.strokes)} strokes - checksum verified"
+            )
+        else:
+            self.general_label.setText(
+                f"{library.family.value} / YSFC {library.header.version} - "
+                f"{library.source_size:,} bytes - {len(items)} {kind_plural} - "
+                f"chunks: {', '.join(library.chunk_ids)}"
+            )
         self.performance_list.blockSignals(True)
         self.performance_list.clear()
         for performance in items:
@@ -255,34 +275,52 @@ class MainWindow(QMainWindow):
                 "platform": platform.platform(),
                 "python": platform.python_version(),
             },
-            "file_probe": probe_ysfc_file(self.last_open_path),
+            "file_probe": (
+                {"name": self.last_open_path.name, "format": "NPNO"}
+                if self.last_open_path.suffix.casefold() == ".npno"
+                else probe_ysfc_file(self.last_open_path)
+            ),
         }
         if self.last_open_error is not None:
             payload["open_error"] = self.last_open_error
         elif self.library is not None:
-            payload["parsed"] = {
-                "family": self.library.family.value,
-                "input_extension": self.library.input_extension,
-                "ysfc_version": self.library.header.version,
-                "selectable_kind": self.library.selectable_kind,
-                "selectable_count": len(self.library.selectable_items),
-                "chunks": [
-                    {"id": block.chunk_id, "count": block.count}
-                    for block in self.library.blocks
-                ],
-                "warnings": list(self.library.warnings),
-            }
+            if isinstance(self.library, NpnoLibrary):
+                payload["parsed"] = {
+                    "family": "NPNO",
+                    "input_extension": ".NPNO",
+                    "version": self.library.header.version,
+                    "name": self.library.name,
+                    "strokes": len(self.library.strokes),
+                    "warnings": list(self.library.warnings),
+                }
+            else:
+                payload["parsed"] = {
+                    "family": self.library.family.value,
+                    "input_extension": self.library.input_extension,
+                    "ysfc_version": self.library.header.version,
+                    "selectable_kind": self.library.selectable_kind,
+                    "selectable_count": len(self.library.selectable_items),
+                    "chunks": [
+                        {"id": block.chunk_id, "count": block.count}
+                        for block in self.library.blocks
+                    ],
+                    "warnings": list(self.library.warnings),
+                }
             selection_payload = self._diagnostic_selection_payload()
             if selection_payload is not None:
                 payload["selection"] = selection_payload
             target_family = self._target_family()
             payload["output_format"] = {
                 "family": (
-                    target_family.value if target_family is not None else self.library.family.value
+                    target_family.value
+                    if target_family is not None
+                    else ("NPNO" if isinstance(self.library, NpnoLibrary) else self.library.family.value)
                 ),
                 "extension": self._output_extension(),
                 "cross_family_conversion": bool(
-                    target_family is not None and target_family is not self.library.family
+                    target_family is not None
+                    and not isinstance(self.library, NpnoLibrary)
+                    and target_family is not self.library.family
                 ),
             }
         QApplication.clipboard().setText(
@@ -293,6 +331,13 @@ class MainWindow(QMainWindow):
     def _diagnostic_selection_payload(self) -> dict[str, object] | None:
         if self.library is None or self.selection is None:
             return None
+        if isinstance(self.selection, NpnoSelection):
+            return {
+                "items": [self.library.selectable_items[0].name],
+                "can_export": self.selection.can_export,
+                "warnings": list(self.selection.warnings),
+                "blockers": list(self.selection.blockers),
+            }
         if isinstance(self.selection, MotifSelection):
             indices = self.selection.item_indices
             mapping = self.selection.program_map
@@ -358,13 +403,20 @@ class MainWindow(QMainWindow):
             self.summary.setText("0 items selected")
             self.export_button.setEnabled(False)
             return
+        selection: Selection
         try:
-            if self.library.family is FileFamily.X0:
+            if isinstance(self.library, NpnoLibrary):
+                npno_selection = NpnoResolver(self.library).resolve(indices)
+                estimate = prepare_exporter(self.library, npno_selection).estimate_size(
+                    npno_selection
+                )
+                selection = npno_selection
+            elif self.library.family is FileFamily.X0:
                 motif_selection = MotifSubsetResolver(self.library).resolve(
                     indices, conservative=self.conservative.isChecked()
                 )
                 estimate = MotifSubsetExporter(self.library).estimate_size(motif_selection)
-                selection: Selection = motif_selection
+                selection = motif_selection
             else:
                 dependency_selection = DependencyResolver(self.library).resolve(
                     indices, conservative=self.conservative.isChecked()
@@ -381,10 +433,27 @@ class MainWindow(QMainWindow):
             return
         self.selection = selection
         self._refresh_performance_labels(selection)
+        if isinstance(selection, NpnoSelection):
+            assert isinstance(self.library, NpnoLibrary)
+            status = "ready to export" if selection.can_export else "export blocked"
+            details = (
+                f"1 Nord instrument - {len(self.library.attack_strokes)} attack strokes - "
+                f"{len(self.library.release_strokes)} release strokes - "
+                f"{len(selection.waveform_plans)} MODX Waveforms - "
+                f"estimated size {estimate:,} bytes - {status}"
+            )
+            if selection.blockers:
+                details += "\n" + "\n".join(f"Blocker: {value}" for value in selection.blockers)
+            elif selection.warnings:
+                details += "\n" + "\n".join(f"Warning: {value}" for value in selection.warnings)
+            self.summary.setText(details)
+            self.export_button.setEnabled(selection.can_export)
+            return
         if isinstance(selection, MotifSelection):
             self._show_motif_summary(selection, estimate)
             return
         resources = sum(selection.resource_counts.values())
+        assert isinstance(self.library, ParsedLibrary)
         status = "ready to export" if selection.can_export else "export blocked"
         details = (
             f"{selection.performance_count} Performances • {selection.waveform_count} Waveforms • "
@@ -433,7 +502,10 @@ class MainWindow(QMainWindow):
     def _refresh_performance_labels(self, selection: Selection | None) -> None:
         if self.library is None:
             return
-        if isinstance(selection, MotifSelection):
+        if isinstance(selection, NpnoSelection):
+            mapping = {}
+            position_map = {}
+        elif isinstance(selection, MotifSelection):
             mapping = selection.program_map
             position_map = dict(
                 zip(selection.source_programs, selection.position_labels, strict=True)
@@ -547,7 +619,12 @@ class MainWindow(QMainWindow):
         self.export_button.setEnabled(not busy and bool(self.selection and self.selection.can_export))
         self.browse_output_button.setEnabled(not busy and self.library is not None)
         self.output_format.setEnabled(
-            not busy and bool(self.library and self.library.family is not FileFamily.X0)
+            not busy
+            and bool(
+                self.library
+                and not isinstance(self.library, NpnoLibrary)
+                and self.library.family is not FileFamily.X0
+            )
         )
 
     def _configure_output_formats(self) -> None:
@@ -556,6 +633,10 @@ class MainWindow(QMainWindow):
         self.output_format.blockSignals(True)
         try:
             self.output_format.clear()
+            if isinstance(self.library, NpnoLibrary):
+                self.output_format.addItem("MODX / MODX+ (.X8L)", FileFamily.X8.value)
+                self.output_format.setEnabled(False)
+                return
             if self.library.family is FileFamily.X0:
                 self.output_format.addItem(
                     f"Original format ({self.library.output_extension})", FileFamily.X0.value
@@ -571,7 +652,11 @@ class MainWindow(QMainWindow):
             self.output_format.blockSignals(False)
 
     def _target_family(self) -> FileFamily | None:
-        if self.library is None or self.library.family is FileFamily.X0:
+        if self.library is None:
+            return None
+        if isinstance(self.library, NpnoLibrary):
+            return FileFamily.X8
+        if self.library.family is FileFamily.X0:
             return None
         value = self.output_format.currentData()
         if value not in {FileFamily.X7.value, FileFamily.X8.value}:

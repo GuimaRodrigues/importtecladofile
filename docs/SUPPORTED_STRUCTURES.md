@@ -14,6 +14,21 @@
 - unknown IDs, recognized as opaque blocks and preserved in conservative mode;
 - names, titles, flags, timestamps, program numbers, and the Waveform list in `EPFM`.
 
+## Nord Piano Library input
+
+- generation-1 `CBIN` containers tagged `npno`, with checksum verification;
+- `CNSP` stream revisions `0x450` and `0x464`;
+- mono and stereo stroke directories, roots, layers, signed tenth-decibel gain, tuning, and
+  compressed PCM decoding;
+- attack and release strokes converted to MODX/MODX+ X8L Waveforms and AWM2 elements;
+- 35,002 Hz source PCM resampled to the Yamaha 44.1 kHz Keybank rate;
+- streamed output, atomic publication, JSON report, and parser/dependency round-trip checks.
+
+NPNO conversion omits pedal-resonance strokes because there is no equivalent AWM2 trigger. Velocity
+layers are divided into approximate MODX ranges, and each Keybank uses the tuning of its sampled
+root rather than Nord's complete per-key table. These are explicit warnings, and hardware validation
+is required.
+
 ## Interpreted dependencies
 
 - Performance → Waveform through the additional `EPFM` program number;

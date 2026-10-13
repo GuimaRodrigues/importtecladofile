@@ -37,10 +37,14 @@ $buildID = [guid]::NewGuid().ToString("N")
 $guiWorkPath = Join-Path $buildRoot ("pyinstaller-gui-{0}" -f $buildID)
 $cliWorkPath = Join-Path $buildRoot ("pyinstaller-cli-{0}" -f $buildID)
 & $buildPython -m PyInstaller --noconfirm --clean --name YamahaLibrarySubsetter --windowed `
-    --workpath $guiWorkPath --paths src scripts/gui_entry.py
+    --workpath $guiWorkPath --paths src `
+    --add-data "LICENSE;." --add-data "NOTICE.md;." --add-data "LICENSES;LICENSES" `
+    scripts/gui_entry.py
 Assert-NativeSuccess "GUI build"
 & $buildPython -m PyInstaller --noconfirm --clean --name yamaha-library --console `
-    --workpath $cliWorkPath --paths src scripts/cli_entry.py
+    --workpath $cliWorkPath --paths src `
+    --add-data "LICENSE;." --add-data "NOTICE.md;." --add-data "LICENSES;LICENSES" `
+    scripts/cli_entry.py
 Assert-NativeSuccess "CLI build"
 
 Write-Host "Executables created in $projectRoot\dist"

@@ -11,9 +11,11 @@ from typing import NoReturn
 from .dependencies import DependencyResolver, DependencySelection
 from .errors import DependencyError, YamahaLibraryError
 from .exporter import LibraryExporter
+from .loader import SourceLibrary, load_library
 from .model import FileFamily, ParsedLibrary
 from .motif import MotifSelection, MotifSubsetExporter, MotifSubsetResolver
-from .parser import YamahaLibraryParser
+from .npno import NpnoLibrary
+from .npno_exporter import NpnoResolver, prepare_exporter
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -81,12 +83,47 @@ def main(argv: list[str] | None = None) -> int:
         return 130
 
 
-def _load(path: Path) -> ParsedLibrary:
-    return YamahaLibraryParser().parse(path)
+def _load(path: Path) -> SourceLibrary:
+    return load_library(path)
 
 
 def _inspect(arguments: argparse.Namespace) -> int:
     library = _load(arguments.file)
+    if isinstance(library, NpnoLibrary):
+        payload = {
+            "file": str(arguments.file.resolve()),
+            "size": library.source_size,
+            "family": "NPNO",
+            "version": library.header.version,
+            "input_extension": library.input_extension,
+            "name": library.name,
+            "variant": library.variant,
+            "channels": library.channels,
+            "stroke_count": len(library.strokes),
+            "attack_strokes": len(library.attack_strokes),
+            "resonance_strokes": len(library.resonance_strokes),
+            "release_strokes": len(library.release_strokes),
+            "checksum_verified": library.header.checksum_ok,
+            "selectable_kind": library.selectable_kind,
+            "selectable_count": 1,
+            "warnings": list(library.warnings),
+        }
+        if arguments.json:
+            _print_json(payload)
+        else:
+            print(f"File: {payload['file']}")
+            print(f"Format: Nord Piano Library / {library.header.version}")
+            print(f"Instrument: {library.selectable_items[0].name}")
+            print(f"Size: {library.source_size} bytes")
+            print(
+                f"Strokes: {len(library.strokes)} "
+                f"({len(library.attack_strokes)} attack, "
+                f"{len(library.resonance_strokes)} resonance, "
+                f"{len(library.release_strokes)} release)"
+            )
+            for warning in library.warnings:
+                print(f"Warning: {warning}")
+        return 0
     payload = {
         "file": str(arguments.file.resolve()),
         "size": library.source_size,
@@ -153,6 +190,32 @@ def _list(arguments: argparse.Namespace) -> int:
 
 def _dependencies(arguments: argparse.Namespace) -> int:
     library = _load(arguments.file)
+    if isinstance(library, NpnoLibrary):
+        _npno_indices_by_names(library, [arguments.performance])
+        selection = NpnoResolver(library).resolve([0])
+        estimated_size = prepare_exporter(library, selection).estimate_size(selection)
+        payload = {
+            "instrument": library.selectable_items[0].name,
+            "attack_strokes": len(library.attack_strokes),
+            "release_strokes": len(library.release_strokes),
+            "resonance_strokes_omitted": len(library.resonance_strokes),
+            "waveforms": len(selection.waveform_plans),
+            "estimated_size": estimated_size,
+            "can_export": selection.can_export,
+            "warnings": list(selection.warnings),
+            "blockers": list(selection.blockers),
+        }
+        if arguments.json:
+            _print_json(payload)
+        else:
+            print(f"Instrument: {payload['instrument']}")
+            print(f"Generated Waveforms: {payload['waveforms']}")
+            print(f"Estimated X8L size: {estimated_size} bytes")
+            for warning in selection.warnings:
+                print(f"Warning: {warning}")
+            for blocker in selection.blockers:
+                print(f"Blocker: {blocker}")
+        return 0 if selection.can_export else 3
     if library.family is FileFamily.X0:
         indices = _motif_indices_by_names(library, [arguments.performance])
         motif_selection = MotifSubsetResolver(library).resolve(
@@ -202,7 +265,15 @@ def _dependencies(arguments: argparse.Namespace) -> int:
 
 def _subset(arguments: argparse.Namespace) -> int:
     library = _load(arguments.file)
-    if library.family is FileFamily.X0:
+    if isinstance(library, NpnoLibrary):
+        if arguments.target_format not in {None, "X8L"}:
+            raise DependencyError("NPNO conversion supports MODX/MODX+ X8L output only.")
+        _npno_indices_by_names(library, arguments.performance)
+        npno_selection = NpnoResolver(library).resolve([0])
+        result = prepare_exporter(library, npno_selection).export(
+            npno_selection, arguments.output, overwrite=arguments.force
+        )
+    elif library.family is FileFamily.X0:
         if arguments.target_format is not None:
             raise DependencyError(
                 "X0A/X0V to X7L/X8L conversion is not supported; "
@@ -312,6 +383,22 @@ def _motif_indices_by_names(
             )
         result.append(matches[0])
     return tuple(dict.fromkeys(result))
+
+
+def _npno_indices_by_names(
+    library: NpnoLibrary, names: list[str] | tuple[str, ...]
+) -> tuple[int, ...]:
+    display_name = library.selectable_items[0].name
+    for requested in names:
+        value = requested.strip()
+        if value not in {"0", "0x00000000"} and value.casefold() not in {
+            display_name.casefold(),
+            library.name.casefold(),
+        }:
+            raise DependencyError(
+                f"NPNO instrument not found: '{requested}'. Available: '{display_name}'."
+            )
+    return (0,)
 
 
 def _kind_plural(library: ParsedLibrary) -> str:

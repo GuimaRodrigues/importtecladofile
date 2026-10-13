@@ -1,7 +1,8 @@
 # Yamaha Library Subsetter
 
-Python desktop application and CLI for inspecting Yamaha MOTIF XS and MONTAGE/MODX files and
-creating conservative Library subsets. The program never modifies the source file: it recalculates
+Python desktop application and CLI for inspecting Yamaha MOTIF XS, MONTAGE/MODX, and Nord Piano
+Library files and creating conservative Library subsets or converting NPNO instruments to X8L.
+The program never modifies the source file: it recalculates
 the catalogue, offsets, and counts, writes through a temporary file, and reopens the output before
 publishing it.
 
@@ -13,7 +14,9 @@ publishing it.
 
 ## Features
 
-- Opens `.X0A`, `.X0V`, `.X7A`, `.X7U`, `.X7L`, `.X8A`, `.X8U`, and `.X8L` files with known YSFC versions.
+- Opens `.npno`, `.X0A`, `.X0V`, `.X7A`, `.X7U`, `.X7L`, `.X8A`, `.X8U`, and `.X8L` files.
+- Validates NPNO CBIN/CNSP structure and checksum, decodes its compressed PCM, resamples it to
+  44.1 kHz, and creates an X8L with an AWM2 Performance for MODX/MODX+.
 - Recognizes MONTAGE X7 YSFC revisions `4.0.1` through `4.0.5`, including the `Entr` layout change.
 - Validates the signature, version, catalogue, Library Info, bounds, `Entr`/`Data` pairs, offsets, and sizes.
 - Handles large sample payloads with `mmap` and streaming copies.
@@ -69,6 +72,13 @@ X0 support is experimental and intended for import into MODX/MONTAGE. All Wavefo
 in X0V output; all Voices and other resources are preserved in X0A output to retain internal
 references. Output must be tested on hardware before production use.
 
+NPNO conversion is also experimental. Attack samples and key-off release samples become AWM2
+elements, including mono/stereo Keybanks and velocity ranges. Nord pedal-resonance samples are
+omitted because AWM2 has no equivalent trigger; velocity response and per-key tuning between
+sampled roots are approximations.
+Always audition the result on the target keyboard. The source `.npno` is read-only and remains
+unchanged.
+
 ## CLI
 
 ```powershell
@@ -80,6 +90,11 @@ yamaha-library subset file.X8L `
   --performance "Performance B" `
   --target-format X7L `
   --output MyLibrary.X7L
+
+yamaha-library inspect "Astoria Grand Lrg 6.1.npno"
+yamaha-library subset "Astoria Grand Lrg 6.1.npno" `
+  --performance "Astoria Grand" `
+  --output "Astoria Grand Lrg 6.1.X8L"
 ```
 
 When using `--target-format`, the `--output` extension must match the selected target.
